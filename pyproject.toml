@@ -17,7 +17,7 @@ Repository = "https://github.com/danielphingston/ComfyUI-OLED-Auto-Black"
 Documentation = "https://github.com/danielphingston/ComfyUI-OLED-Auto-Black#readme"
 
 [tool.comfy]
-PublisherId = "YOUR_PUBLISHER_ID"
+PublisherId = "acidburn"
 DisplayName = "OLED Auto Black"
 Icon = "https://raw.githubusercontent.com/danielphingston/ComfyUI-OLED-Auto-Black/main/docs/icon.png"
 includes = []
