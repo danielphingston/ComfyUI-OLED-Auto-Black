@@ -18,7 +18,7 @@ jobs:
       - name: Run tests
         run: |
           set -o pipefail
-          python -m pytest -q -rA tests 2>&1 | tee pytest.log || {
+          python -m pytest -q -rA --import-mode=importlib tests 2>&1 | tee pytest.log || {
             grep -E "FAILED|Error|assert" pytest.log | head -20 | while read -r line; do echo "::error::$line"; done
             exit 1
           }

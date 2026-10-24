@@ -1,5 +1,5 @@
 """
-OLED Auto Black v2 — ComfyUI custom node.
+OLED Auto Black — ComfyUI custom node.
 Auto-detects the background haze per image and crushes it to true #000000,
 while protecting real detail (smoke, hair, rim light, anti-aliased edges).
 """
