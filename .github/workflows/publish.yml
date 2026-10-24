@@ -15,7 +15,13 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install numpy pytest
-      - run: pytest -q tests
+      - name: Run tests
+        run: |
+          set -o pipefail
+          python -m pytest -q -rA tests 2>&1 | tee pytest.log || {
+            grep -E "FAILED|Error|assert" pytest.log | head -20 | while read -r line; do echo "::error::$line"; done
+            exit 1
+          }
 
   publish:
     needs: test
