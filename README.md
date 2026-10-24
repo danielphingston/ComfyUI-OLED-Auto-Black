@@ -31,7 +31,7 @@ comfy node install comfyui-oled-auto-black
 **Manual:**
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/YOUR_GITHUB_USERNAME/ComfyUI-OLED-Auto-Black
+git clone https://github.com/danielphingston/ComfyUI-OLED-Auto-Black
 ```
 
 Restart ComfyUI. The node is under **image → postprocessing → OLED Auto Black**. An example workflow is in `example_workflows/`.

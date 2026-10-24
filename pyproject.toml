@@ -12,12 +12,12 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/YOUR_GITHUB_USERNAME/ComfyUI-OLED-Auto-Black"
-"Bug Tracker" = "https://github.com/YOUR_GITHUB_USERNAME/ComfyUI-OLED-Auto-Black/issues"
-Documentation = "https://github.com/YOUR_GITHUB_USERNAME/ComfyUI-OLED-Auto-Black#readme"
+Repository = "https://github.com/danielphingston/ComfyUI-OLED-Auto-Black"
+"Bug Tracker" = "https://github.com/danielphingston/ComfyUI-OLED-Auto-Black/issues"
+Documentation = "https://github.com/danielphingston/ComfyUI-OLED-Auto-Black#readme"
 
 [tool.comfy]
 PublisherId = "YOUR_PUBLISHER_ID"
 DisplayName = "OLED Auto Black"
-Icon = "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/ComfyUI-OLED-Auto-Black/main/docs/icon.png"
+Icon = "https://raw.githubusercontent.com/danielphingston/ComfyUI-OLED-Auto-Black/main/docs/icon.png"
 includes = []
