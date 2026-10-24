@@ -13,9 +13,10 @@ It also protects what a plain threshold destroys: faint smoke wisps, hair, rim l
 2. **Sets the black point for you.** `black_point = haze + k·σ`, where the preset picks `k` (gentle 2, balanced 3, aggressive 5).
 3. **Tells detail from noise.** Local standard deviation in a small window: flat haze only varies by σ, real detail varies far more.
 4. **Two tone curves.** Flat haze fades smoothly to zero. Detected detail gets a linear stretch instead, so it keeps its contrast against the new black.
-5. **Despeckles.** Removes isolated 1–2 px dots, keeps thin lines and genuinely bright stars.
-6. **Keeps colour.** Darkness is judged by `max(R,G,B)` and applied as one gain per pixel, so hue never shifts and deep reds/blues survive.
-7. **Dithers the fade** so soft glows don't band when saved as 8-bit.
+5. **Optionally keeps soft glow.** Diffuse light like the Milky Way looks like noise pixel by pixel, but its average over a large area stays above the haze while noise averages out. With `keep_soft_glow` raised, those areas keep their light. Off by default.
+6. **Despeckles.** Removes isolated 1–2 px dots, keeps thin lines and genuinely bright stars.
+7. **Keeps colour.** Darkness is judged by `max(R,G,B)` and applied as one gain per pixel, so hue never shifts and deep reds/blues survive.
+8. **Dithers the fade** so soft glows don't band when saved as 8-bit.
 
 An animated walkthrough of the maths is in [`docs/explainer.html`](docs/explainer.html).
 
@@ -52,6 +53,7 @@ No extra dependencies beyond what ComfyUI already ships (numpy, torch).
 | `protect_color` | on | Uses `max(R,G,B)` instead of luminance, so deep saturated colours are kept. |
 | `max_black_point` | 40 | Safety cap for auto mode (0–255 scale). |
 | `manual_black_point`, `manual_range` | 8, 10 | Used only in manual mode. |
+| `keep_soft_glow` | 0.0 | Off by default for the deepest black. Raise it to keep diffuse light just above the haze, like the Milky Way, fog, a nebula or a coloured gradient fading to black. |
 
 ## Outputs
 
@@ -59,7 +61,7 @@ No extra dependencies beyond what ComfyUI already ships (numpy, torch).
 |---|---|---|
 | `image` | IMAGE | The processed image. |
 | `black_mask` | MASK | 1 where the pixel is now exactly zero. |
-| `debug_view` | IMAGE | Red = crushed, green = detail protected, blue = speck removed. |
+| `debug_view` | IMAGE | Red = crushed, green = detail or soft glow protected, blue = speck removed. |
 | `report` | STRING | e.g. `haze≈15.5 σ≈2.1 → black_point=22 … pure black 87.2%` |
 | `black_point` | INT | The black point chosen (median across a batch). |
 

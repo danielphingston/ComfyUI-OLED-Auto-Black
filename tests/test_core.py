@@ -73,3 +73,25 @@ def test_output_shapes_and_range():
     assert mask.shape == img.shape[:2]
     assert out.min() >= 0 and out.max() <= 1
     assert isinstance(bp, int) and "black_point" in report
+
+
+def test_no_halo_around_bright_subject():
+    img, _, d = make_scene()
+    out, *_ = process(img)
+    ring = (d > 64) & (d < 75)          # haze right next to the disc
+    assert (out.max(axis=2)[ring] == 0).mean() > 0.95
+
+
+def test_soft_glow_kept_but_background_black():
+    rng = np.random.default_rng(3)
+    h, w = 512, 288
+    yy, xx = np.mgrid[:h, :w]
+    v = 13 + rng.normal(0, 2, (h, w))
+    band = np.exp(-((yy - xx * 1.2 - 150) / 50.0) ** 2) * 9      # faint diffuse glow
+    v = v + band
+    img = np.repeat((np.clip(v, 0, 255) / 255)[..., None], 3, axis=2).astype(np.float32)
+    on = process(img, keep_soft_glow=1.0)[0].max(axis=2) * 255
+    off = process(img, keep_soft_glow=0.0)[0].max(axis=2) * 255
+    core, empty = band > 7, band < 0.01
+    assert on[core].mean() > 2 * off[core].mean()
+    assert (on[empty] == 0).mean() > 0.97

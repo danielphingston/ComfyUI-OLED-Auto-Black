@@ -33,6 +33,8 @@ class OledAutoBlack:
                                     "tooltip": "Safety cap for auto mode (0-255 scale)."}),
                 "manual_black_point": ("INT", {"default": 8, "min": 0, "max": 128}),
                 "manual_range": ("INT", {"default": 10, "min": 1, "max": 128}),
+                "keep_soft_glow": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05,
+                                   "tooltip": "Keep diffuse light just above the haze (Milky Way, fog, nebula, soft gradients). 0 = off, the deepest black."}),
             }
         }
 
@@ -43,7 +45,7 @@ class OledAutoBlack:
 
     def run(self, image, enabled, mode, preset, detail_protection, shadow_dehaze,
             despeckle, dither, protect_color, max_black_point,
-            manual_black_point, manual_range):
+            manual_black_point, manual_range, keep_soft_glow=0.0):
         if not enabled:
             b, h, w, _ = image.shape
             return (image, torch.zeros((b, h, w)), image, "disabled", 0)
@@ -56,7 +58,8 @@ class OledAutoBlack:
                 manual_black_point=manual_black_point, manual_range=manual_range,
                 max_black_point=max_black_point, protect_color=protect_color,
                 detail_protection=detail_protection, shadow_dehaze=shadow_dehaze,
-                despeckle=despeckle, dither=dither, seed=i,
+                despeckle=despeckle, dither=dither,
+                keep_soft_glow=keep_soft_glow, seed=i,
             )
             outs.append(torch.from_numpy(o))
             masks.append(torch.from_numpy(m))

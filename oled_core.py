@@ -86,7 +86,7 @@ def analyze(v: np.ndarray, k: float, max_black_point: float):
 def process(img: np.ndarray, *, mode="auto", preset="balanced",
             manual_black_point=8, manual_range=10, max_black_point=40,
             protect_color=True, detail_protection=1.0, shadow_dehaze=0.5,
-            despeckle=True, dither=True, seed=0):
+            despeckle=True, dither=True, keep_soft_glow=0.0, seed=0):
     """
     Returns (out_img, black_mask, debug_img, report_str, black_point_int).
     """
@@ -129,6 +129,32 @@ def process(img: np.ndarray, *, mode="auto", preset="balanced",
 
     out_v = flat_out + (detail_out - flat_out) * struct
 
+    # --- 3b. soft glow: diffuse light (Milky Way, fog, nebula) -----------
+    # Per pixel it looks like noise, but averaged over a large window noise
+    # cancels (its spread shrinks by sqrt(N)) while a real glow keeps the
+    # mean above the haze. Both means skip pixels brighter than t1, so a
+    # bright subject can't lift the haze around it into a halo; the
+    # small-window gate keeps the decision local.
+    glow = np.zeros_like(v)
+    if keep_soft_glow > 0 and a["mode"] != "bright-image fallback":
+        rg = max(8, round(min(h, w) / 50))
+        rs_ = max(2, r * 2)
+        dim = (v255 < t1).astype(np.float32)
+
+        def masked_mean(rad):
+            return (_box_mean(v255 * dim, rad)
+                    / np.maximum(_box_mean(dim, rad), 1e-3))
+
+        m_large = masked_mean(rg)
+        m_small = masked_mean(rs_)
+        glow = (_smoothstep(bg + 1.0 * noise, bg + 2.5 * noise, m_large)
+                * _smoothstep(bg, bg + 1.5 * noise, m_small)
+                * float(keep_soft_glow))
+        g_lo = bg + 0.5 * noise
+        glow_out = t1_out * np.clip((v255 - g_lo) / max(t1 - g_lo, 1e-3), 0.0, 1.0)
+        glow_out = np.where(v255 >= t1, out_v, np.maximum(out_v, glow_out))
+        out_v = out_v + (glow_out - out_v) * glow
+
     # --- 4. despeckle: isolated dots only, lines survive -----------------
     speck = np.zeros_like(v, dtype=bool)
     if despeckle:
@@ -136,7 +162,7 @@ def process(img: np.ndarray, *, mode="auto", preset="balanced",
         rs = max(2, r)
         surround = _box_mean(black, rs)
         # a 1-px line through a 5x5 window leaves ~80% black; a dot leaves ~96%
-        speck = (surround > 0.92) & (v255 < 2.0 * t1) & (out_v > 0)
+        speck = (surround > 0.92) & (v255 < 2.0 * t1) & (out_v > 0) & (glow < 0.5)
         out_v = np.where(speck, 0.0, out_v)
 
     # --- apply as hue-preserving gain ------------------------------------
@@ -160,7 +186,7 @@ def process(img: np.ndarray, *, mode="auto", preset="balanced",
     grey = np.repeat((v * 0.6)[..., None], 3, axis=2)
     dbg = grey.copy()
     crushed = (mask > 0) & (v255 > 0.5)
-    kept = (struct > 0.5) & (v255 < t1) & (out_v > 0)
+    kept = ((struct > 0.5) | (glow > 0.5)) & (v255 < t1) & (out_v > 0)
     dbg[crushed] = dbg[crushed] * 0.3 + np.array([0.6, 0.0, 0.0])
     dbg[kept] = np.array([0.1, 0.9, 0.2])
     dbg[speck] = np.array([0.2, 0.5, 1.0])
@@ -169,5 +195,5 @@ def process(img: np.ndarray, *, mode="auto", preset="balanced",
     report = (f"[{a['mode']}] haze≈{bg:.1f} σ≈{noise:.1f} → black_point={t0:.0f} "
               f"toe_to={t1:.0f} dehaze={haze:.1f} | dark {a['dark_frac']*100:.0f}% | "
               f"pure black {pure:.1f}% | detail kept {kept.mean()*100:.2f}% | "
-              f"specks {int(speck.sum())}")
+              f"specks {int(speck.sum())} | soft glow {float((glow > 0.5).mean())*100:.1f}%")
     return out, mask, dbg, report, int(round(t0))
