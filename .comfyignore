@@ -1,0 +1,4 @@
+# Not needed inside ComfyUI; kept on GitHub only
+tests/
+docs/
+.github/

@@ -1,0 +1,23 @@
+[project]
+name = "comfyui-oled-auto-black"
+description = "Auto-detects the background haze in dark images and crushes it to true #000000 for OLED wallpapers, while protecting faint detail like smoke, hair and anti-aliased edges."
+version = "1.0.0"
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy"]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Environment :: GPU",
+]
+
+[project.urls]
+Repository = "https://github.com/YOUR_GITHUB_USERNAME/ComfyUI-OLED-Auto-Black"
+"Bug Tracker" = "https://github.com/YOUR_GITHUB_USERNAME/ComfyUI-OLED-Auto-Black/issues"
+Documentation = "https://github.com/YOUR_GITHUB_USERNAME/ComfyUI-OLED-Auto-Black#readme"
+
+[tool.comfy]
+PublisherId = "YOUR_PUBLISHER_ID"
+DisplayName = "OLED Auto Black"
+Icon = "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/ComfyUI-OLED-Auto-Black/main/docs/icon.png"
+includes = []

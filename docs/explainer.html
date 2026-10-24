@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Inside OLED Auto Black</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one long instrument panel on true OLED black. Each pipeline stage is a row:
+   prose on the left, a live scope on the right; stacks to one column on phones.
+   Single deliberate dark look: the subject is pixels that switch off. */
+:root{
+  color-scheme: dark;
+  --bg:#000000;          /* the whole point: pixels off */
+  --panel:#08090b;
+  --line:#1c1f24;
+  --fg:#e7e5e0;
+  --dim:#8b8f96;
+  --haze:#ffb547;        /* the glowing grey we are killing; amber reads as "lit" */
+  --crush:#e5483f;       /* debug red   */
+  --keep:#3fd06f;        /* debug green */
+  --speck:#5b93ff;       /* debug blue  */
+  --font-display:"Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --font-body:"Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --s1: .8125rem; --s2: 1rem; --s3: 1.25rem; --s4: 2rem; --s5: clamp(2.6rem, 7vw, 4.75rem);
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:var(--s2);line-height:1.6;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-block:0 64px}
+.wrap{max-width:1080px;margin:0 auto}
+h1,h2{font-family:var(--font-display);text-transform:uppercase;letter-spacing:.01em;line-height:.95;text-wrap:balance;margin:0}
+h1{font-size:var(--s5);font-weight:800}
+h2{font-size:var(--s4);font-weight:700}
+p{margin:0;max-width:62ch}
+.mono,code{font-family:var(--font-mono);font-size:.86em}
+code{color:var(--haze)}
+.eyebrow{font-family:var(--font-mono);font-size:var(--s1);letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.dim{color:var(--dim)}
+
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:40px;align-items:center;padding-block:48px 40px;border-bottom:1px solid var(--line)}
+.hero-text{display:flex;flex-direction:column;gap:18px;min-width:0}
+.lede{font-size:var(--s3);line-height:1.45;color:var(--fg)}
+.lede em{color:var(--haze);font-style:normal}
+.stage{display:flex;flex-direction:column;gap:12px;min-width:0;align-items:center}
+.phone{position:relative;width:min(100%, 300px);aspect-ratio:9/16;border-radius:30px;padding:8px;background:var(--panel);border:1px solid var(--line)}
+.phone canvas{width:100%;height:100%;display:block;border-radius:22px;cursor:ew-resize;touch-action:pan-y}
+.split-tag{position:absolute;top:18px;font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:2px 7px;border-radius:4px;background:rgba(0,0,0,.6);pointer-events:none}
+.split-tag.l{left:18px;color:var(--dim)} .split-tag.r{right:18px;color:var(--fg)}
+
+.controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 14px;width:min(100%,420px)}
+.ctl{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ctl label,.ctl .lab{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);display:flex;justify-content:space-between}
+.ctl.full{grid-column:1/-1}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{flex:1;background:transparent;color:var(--dim);border:0;padding:7px 4px;font-family:var(--font-mono);font-size:12px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.seg button:focus-visible,.toggle input:focus-visible+span,input[type=range]:focus-visible{outline:2px solid var(--haze);outline-offset:2px}
+input[type=range]{width:100%;accent-color:var(--fg)}
+.toggles{display:flex;flex-wrap:wrap;gap:8px}
+.toggle{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:12px;color:var(--dim);cursor:pointer}
+.toggle input{accent-color:var(--fg)}
+.report{font-family:var(--font-mono);font-size:11.5px;color:var(--dim);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;width:min(100%,420px);line-height:1.5;font-variant-numeric:tabular-nums}
+.report b{color:var(--fg);font-weight:600}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--font-mono);font-size:11px;color:var(--dim)}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+/* pipeline rows */
+.step{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:40px;padding-block:52px;border-bottom:1px solid var(--line);align-items:start}
+.step-text{display:flex;flex-direction:column;gap:14px;min-width:0}
+.step-num{font-family:var(--font-display);font-weight:800;font-size:3.4rem;line-height:.8;color:var(--line);-webkit-text-stroke:1px var(--dim)}
+.scope{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0;display:flex;flex-direction:column;gap:8px}
+.scope canvas{width:100%;display:block}
+.cap{font-family:var(--font-mono);font-size:11px;color:var(--dim);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.formula{font-family:var(--font-mono);font-size:13px;line-height:1.75;background:var(--panel);border-left:2px solid var(--haze);padding:10px 14px;overflow-x:auto;white-space:pre;color:var(--fg)}
+.formula .c{color:var(--dim)}
+.why{font-size:var(--s1);color:var(--dim);border-top:1px dashed var(--line);padding-top:10px}
+
+.intro{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;padding-block:44px;border-bottom:1px solid var(--line)}
+.intro div{display:flex;flex-direction:column;gap:8px;min-width:0}
+.big{font-family:var(--font-display);font-weight:700;font-size:2.4rem;line-height:1;font-variant-numeric:tabular-nums}
+.outro{padding-block:44px;display:flex;flex-direction:column;gap:14px}
+
+@media (max-width:820px){
+  .hero,.step{grid-template-columns:minmax(0,1fr);gap:26px}
+  .intro{grid-template-columns:minmax(0,1fr);gap:22px}
+  .hero{padding-block:32px}
+}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style>
+
+</head><body>
+<div class="wrap">
+
+<section class="hero">
+  <div class="hero-text">
+    <span class="eyebrow">ComfyUI node · oled_core.py, explained</span>
+    <h1>Inside OLED Auto Black</h1>
+    <p class="lede">An OLED pixel at value <code>0</code> is switched off. A pixel at <code>15</code> is <em>on</em>, glowing a dim grey that you can see in a dark room. Diffusion models leave a whole sky of those. This page walks through how the node finds that haze, kills it, and keeps the smoke, hair and edges you actually wanted.</p>
+    <p class="dim">The phone on the right runs the real algorithm, ported line for line to JavaScript, on a synthetic night scene. Drag across it to compare. Every control below it maps to a widget on the node.</p>
+    <div class="legend"><span><i style="background:var(--crush)"></i>crushed to #000000</span><span><i style="background:var(--keep)"></i>detail protected</span><span><i style="background:var(--speck)"></i>speck removed</span></div>
+  </div>
+  <div class="stage">
+    <div class="phone">
+      <canvas id="demo" width="270" height="480" aria-label="Before and after comparison of the night scene. Drag horizontally to move the split."></canvas>
+      <span class="split-tag l">input</span><span class="split-tag r" id="rtag">output</span>
+    </div>
+    <div class="controls">
+      <div class="ctl full"><span class="lab">preset <span id="kval">k = 3σ</span></span>
+        <div class="seg" role="group" aria-label="Preset">
+          <button type="button" data-preset="gentle" aria-pressed="false">gentle</button>
+          <button type="button" data-preset="balanced" aria-pressed="true">balanced</button>
+          <button type="button" data-preset="aggressive" aria-pressed="false">aggressive</button>
+        </div></div>
+      <div class="ctl"><label for="detail">detail_protection <span id="detailv">1.00</span></label><input id="detail" type="range" min="0" max="1" step="0.05" value="1"></div>
+      <div class="ctl"><label for="dehaze">shadow_dehaze <span id="dehazev">0.50</span></label><input id="dehaze" type="range" min="0" max="1" step="0.05" value="0.5"></div>
+      <div class="ctl full"><span class="lab">right side shows</span>
+        <div class="seg" role="group" aria-label="Right side view">
+          <button type="button" data-view="out" aria-pressed="true">output</button>
+          <button type="button" data-view="dbg" aria-pressed="false">debug_view</button>
+          <button type="button" data-view="v1" aria-pressed="false">v1 node</button>
+        </div></div>
+      <div class="ctl full toggles">
+        <label class="toggle"><input id="despeckle" type="checkbox" checked><span>despeckle</span></label>
+        <label class="toggle"><input id="dither" type="checkbox" checked><span>dither</span></label>
+        <label class="toggle"><input id="boost" type="checkbox" checked><span>show near-blacks ×4</span></label>
+      </div>
+    </div>
+    <div class="report" id="report" aria-live="polite"></div>
+  </div>
+</section>
+
+<section class="intro">
+  <div><span class="eyebrow">what the VAE leaves</span><span class="big" style="color:var(--haze)">15 ± 2</span><p class="dim">Typical background value out of 255 on a "pure black" Krea 2 render, with noise on top. Invisible on an LCD, visibly grey on OLED in the dark.</p></div>
+  <div><span class="eyebrow">what you want</span><span class="big">0</span><p class="dim">Exactly zero in every channel. Not 1, not 2. Only a true zero switches the subpixel off.</p></div>
+  <div><span class="eyebrow">what must survive</span><span class="big" style="color:var(--keep)">+11</span><p class="dim">A faint smoke wisp sits just a few levels above the haze. A plain threshold can't tell it from noise. The rest of this page is how the node can.</p></div>
+</section>
+
+<section class="step">
+  <div class="step-text">
+    <span class="step-num" aria-hidden="true">1</span>
+    <h2>One number per pixel</h2>
+    <p>Every decision is made on a single brightness value per pixel, <code>v</code>. The obvious choice is luminance. The node uses the brightest channel instead.</p>
+    <div class="formula">v = max(R, G, B)            <span class="c"># protect_color = on</span>
+v = 0.2126R + 0.7152G + 0.0722B  <span class="c"># protect_color = off</span></div>
+    <p>A deep red like <code>(64, 5, 5)</code> has a luminance of only about 18, which is below the black point, so a luminance test would erase it. Its max channel is 64, clearly a real colour. The swatches on the right run both versions through the same black point.</p>
+    <p class="why">Your original BlendIf nodes used "gray", which is luminance. That is why dark reds and blues were at risk.</p>
+  </div>
+  <div class="scope"><canvas id="cvColor" height="230"></canvas><div class="cap"><span>black point t0 = 22</span><span>bar = the value each method measures</span></div></div>
+</section>
+
+<section class="step">
+  <div class="step-text">
+    <span class="step-num" aria-hidden="true">2</span>
+    <h2>Find the haze in the histogram</h2>
+    <p>The node takes every pixel darker than 64 and counts how many sit at each level. On a dark wallpaper the background is most of the image, so it shows up as one tall peak. That peak is the haze level, <code>bg</code>.</p>
+    <p>The width of the peak is the noise. It is measured with the median absolute deviation, which ignores outliers like the moon or a wisp crossing the window.</p>
+    <div class="formula">hist  = histogram(v &lt; 64, 1-level bins)
+hist' = hist ∗ [1 2 3 2 1]       <span class="c"># smooth so one spiky bin can't win</span>
+bg    = argmax(hist') + 0.5
+σ     = 1.4826 · median(|x − median(x)|),  |x − bg| &lt; 12
+t0    = clamp(bg + k·σ, 3, max_black_point)
+t1    = t0 + max(4, 0.6·t0)       <span class="c"># end of the fade</span></div>
+    <p>The preset picks <code>k</code>: gentle 2, balanced 3, aggressive 5. With Gaussian noise, 3σ above the peak is above 99.8% of the haze pixels, so almost all of it will be cleared while staying as low as possible.</p>
+    <p class="why">The 1.4826 factor turns the MAD into a standard deviation for normal noise. If fewer than 10% of pixels are dark, the image isn't a dark wallpaper, and the node falls back to a tiny black point of 2.</p>
+  </div>
+  <div class="scope"><canvas id="cvHist" height="260"></canvas><div class="cap"><span id="histcap"></span><span>x axis: value 0–64</span></div></div>
+</section>
+
+<section class="step">
+  <div class="step-text">
+    <span class="step-num" aria-hidden="true">3</span>
+    <h2>The tone curve</h2>
+    <p>Below <code>t0</code> the output is zero. Above <code>t1</code> the image is untouched. In between, a smoothstep eases in so there is no visible edge where the black begins.</p>
+    <div class="formula">smoothstep(a, b, x) = t²(3 − 2t),  t = clamp((x − a)/(b − a), 0, 1)
+
+dehaze(x) = max(x − h·(1 − smoothstep(0, 128, x)), 0)
+            <span class="c"># h = bg · shadow_dehaze</span>
+flat(x)   = dehaze(x) · smoothstep(t0, t1, x)</div>
+    <p><code>dehaze</code> pulls the subject's own shadows down by up to <code>h</code>. That removes the milky veil the haze also left on the subject. Its effect fades to nothing by mid-grey, so highlights don't move.</p>
+    <p>The amber dot runs along the input axis. Read its output on the curve.</p>
+  </div>
+  <div class="scope"><canvas id="cvCurve" height="300"></canvas><div class="cap"><span><span style="color:var(--fg)">━</span> flat (haze) curve &nbsp; <span style="color:var(--keep)">━</span> detail curve &nbsp; <span class="dim">┄</span> unchanged</span><span>input 0–64 → output</span></div></div>
+</section>
+
+<section class="step">
+  <div class="step-text">
+    <span class="step-num" aria-hidden="true">4</span>
+    <h2>Telling detail from noise</h2>
+    <p>A faint wisp and a noise spike can have the same value. What differs is the neighbourhood. Flat haze only wobbles by σ. An edge, a hair or a wisp makes the values inside a small window spread much wider.</p>
+    <p>So the node computes the standard deviation in a small window around every pixel, using two box blurs over an integral image so it costs the same at any window size.</p>
+    <div class="formula">sd     = √( mean(v²) − mean(v)² )   <span class="c"># over a (2r+1)² window</span>
+r      = max(1, round(min(H, W) / 600))
+struct = smoothstep(1.5σ, 3σ, sd) · detail_protection</div>
+    <p>The scope shows a 1-D slice through the image: noise, then a wisp, then the moon's edge. The window slides across it. Where the spread climbs past 1.5σ, <code>struct</code> starts turning green.</p>
+    <p class="why">The radius scales with resolution, so the 2× upscaled image is measured over the same physical area as the original.</p>
+  </div>
+  <div class="scope"><canvas id="cvStd" height="300"></canvas><div class="cap"><span>top: v along one row · bottom: local sd and struct weight</span></div></div>
+</section>
+
+<section class="step">
+  <div class="step-text">
+    <span class="step-num" aria-hidden="true">5</span>
+    <h2>Two curves, blended per pixel</h2>
+    <p>Structured pixels get a different curve. Instead of the steep smoothstep, the range from just above the haze to <code>t1</code> is stretched linearly down to zero. A wisp that was 11 levels above the haze ends up about 10 levels above true black. Its contrast survives; only the floor under it moves.</p>
+    <div class="formula">lo     = bg + 2.5σ                  <span class="c"># still haze, even if "structured"</span>
+detail = max(flat, dehaze(t1) · (v − lo)/(t1 − lo))   <span class="c"># for v &lt; t1</span>
+out_v  = flat + (detail − flat) · struct</div>
+    <p>Because <code>struct</code> is a smooth weight from 0 to 1, pixels on the border between noise and detail get a mix of both curves rather than a hard switch.</p>
+    <p class="why">The <code>lo</code> floor is why there is no halo around the moon. Background pixels next to a sharp edge do have a high spread, but their value is still haze, below <code>lo</code>, so they go to zero anyway.</p>
+  </div>
+  <div class="scope"><canvas id="cvBlend" height="300"></canvas><div class="cap"><span>same wisp pixel (v ≈ 26) through both paths</span></div></div>
+</section>
+
+<section class="step">
+  <div class="step-text">
+    <span class="step-num" aria-hidden="true">6</span>
+    <h2>Despeckle: dots go, lines stay</h2>
+    <p>After the curve, a few single pixels of noise survive in the black. The node looks at a 5×5 window around each lit pixel and asks what fraction of it is already black.</p>
+    <div class="formula">black    = out_v &lt; 0.5
+surround = box_mean(black, 5×5)
+speck    = surround &gt; 0.92  and  v &lt; 2·t1  and  out_v &gt; 0</div>
+    <p>A lone dot leaves 24 of 25 cells black, which is 0.96, so it is removed. A 1-pixel line passes through 5 cells, leaving 0.80, so it stays. The <code>v &lt; 2·t1</code> check keeps real stars: a single pixel that is genuinely bright is never treated as a speck.</p>
+  </div>
+  <div class="scope"><canvas id="cvSpeck" height="250"></canvas><div class="cap"><span>left: isolated dot · right: thin line</span><span>threshold 0.92</span></div></div>
+</section>
+
+<section class="step">
+  <div class="step-text">
+    <span class="step-num" aria-hidden="true">7</span>
+    <h2>Apply as one gain, then dither</h2>
+    <p>The curve gave a new brightness <code>out_v</code> for each pixel. To apply it without shifting the colour, all three channels are multiplied by the same factor. A dim blue rim light stays the same blue, just darker.</p>
+    <div class="formula">gain    = out_v / v
+RGB_out = clamp(RGB · gain, 0, 1)
+RGB_out = 0  where out_v ≤ 0          <span class="c"># exact #000000</span>
+
+dither  = (U₁ − U₂) / 255,  U ~ uniform(0,1)   <span class="c"># triangular</span>
+          only where 0 &lt; out_v &lt; dehaze(t1)</div>
+    <p>The fade-to-black spans only about a dozen 8-bit levels, so a soft glow can show visible steps once saved. Adding up to one level of triangular noise in that zone breaks the steps into grain your eye averages out. The scope shows the same glow without and with dither, brightened so the steps are visible.</p>
+    <p class="why">Dither is applied before the final zeroing, so it can never put light back into a pixel that should be off.</p>
+  </div>
+  <div class="scope"><canvas id="cvDither" height="220"></canvas><div class="cap"><span>top: quantized to 8-bit · bottom: with triangular dither</span><span>shown ×6</span></div></div>
+</section>
+
+<section class="outro">
+  <span class="eyebrow">the whole pipeline, per image</span>
+  <div class="formula">v → histogram → bg, σ → t0, t1
+  → local sd → struct
+  → flat curve ⟷ detail curve, blended by struct
+  → despeckle → gain = out_v / v → dither → zero</div>
+  <p class="dim">The node returns the image, a mask of the pixels that are now exactly zero, the debug view, the report line, and the black point it chose.</p>
+</section>
+
+</div>
+
+<script>
+(() => {
+"use strict";
+const css = getComputedStyle(document.documentElement);
+const C = n => css.getPropertyValue(n).trim();
+const COL = {fg:C("--fg"),dim:C("--dim"),line:C("--line"),haze:C("--haze"),crush:C("--crush"),keep:C("--keep"),speck:C("--speck"),panel:C("--panel")};
+const MONO = '11px "JetBrains Mono", ui-monospace, monospace';
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const clamp=(x,a=0,b=1)=>x<a?a:x>b?b:x;
+const smooth=(e0,e1,x)=>{const t=clamp((x-e0)/Math.max(e1-e0,1e-6));return t*t*(3-2*t);};
+
+/* ---------- seeded RNG ---------- */
+function rng(seed){let a=seed>>>0;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function gauss(r){let u=0,v=0;while(u===0)u=r();v=r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+
+/* ---------- synthetic night scene (0..255 floats) ---------- */
+const W=270,H=480,N=W*H;
+const R0=new Float32Array(N),G0=new Float32Array(N),B0=new Float32Array(N);
+(function scene(){
+  const r=rng(7);
+  const mx=188,my=118,mr=26;
+  const wispX=(k,y)=>58+k*58+16*Math.sin(y/28+k*1.7);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=y*W+x, n=gauss(r)*2;
+    let R=15+n,G=15+n,B=18+n;
+    const d=Math.hypot(x-mx,y-my);
+    const g=d>mr?Math.pow(clamp(1-(d-mr)/80),2)*42:0;
+    R+=g*0.7;G+=g*0.82;B+=g*1.0;
+    const cov=clamp((mr-d)+0.5);
+    R=R*(1-cov)+232*cov;G=G*(1-cov)+226*cov;B=B*(1-cov)+212*cov;
+    if(y>205&&y<440)for(let k=0;k<3;k++){const wx=wispX(k,y);if(Math.abs(x-wx)<0.9){R+=11;G+=11;B+=12;}}
+    const rd=Math.hypot(x-70,y-400);if(rd<10){const c=clamp(10-rd);R=R*(1-c)+64*c;G=G*(1-c)+5*c;B=B*(1-c)+5*c;}
+    R0[i]=clamp(R,0,255);G0[i]=clamp(G,0,255);B0[i]=clamp(B,0,255);
+  }
+  for(let s=0;s<14;s++){const x=(r()*W)|0,y=(r()*190)|0,i=y*W+x;if(Math.hypot(x-mx,y-my)>60){R0[i]=G0[i]=B0[i]=205;}}
+  for(let s=0;s<160;s++){const x=(r()*W)|0,y=(r()*200)|0,i=y*W+x;R0[i]+=9;G0[i]+=9;B0[i]+=9;}
+})();
+
+/* ---------- core, ported from oled_core.py ---------- */
+function boxMean(m,w,h,r){
+  const k=2*r+1, pw=w+2*r, ph=h+2*r, ii=new Float64Array((pw+1)*(ph+1)), out=new Float32Array(w*h);
+  for(let y=0;y<ph;y++){let row=0;const sy=Math.min(Math.max(y-r,0),h-1);
+    for(let x=0;x<pw;x++){const sx=Math.min(Math.max(x-r,0),w-1);row+=m[sy*w+sx];ii[(y+1)*(pw+1)+x+1]=ii[y*(pw+1)+x+1]+row;}}
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const a=(y+k)*(pw+1)+x+k,b=y*(pw+1)+x+k,c=(y+k)*(pw+1)+x,d=y*(pw+1)+x;
+    out[y*w+x]=(ii[a]-ii[b]-ii[c]+ii[d])/(k*k);}
+  return out;
+}
+function median(a){const s=Float32Array.from(a).sort();const n=s.length;return n?(n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2):0;}
+const PRESETS={gentle:2,balanced:3,aggressive:5};
+
+function analyze(v,k){
+  const dark=[];for(let i=0;i<v.length;i++)if(v[i]<64)dark.push(v[i]);
+  const frac=dark.length/v.length;
+  const hist=new Array(64).fill(0);for(const x of dark)hist[Math.min(63,Math.floor(x))]++;
+  if(frac<0.1)return{bg:0,noise:1,t0:2,t1:5,frac,hist,hs:hist,mode:"bright-image fallback"};
+  const ker=[1,2,3,2,1],hs=hist.map((_,i)=>{let s=0;for(let j=-2;j<=2;j++){const q=i+j;if(q>=0&&q<64)s+=hist[q]*ker[j+2];}return s;});
+  let am=0;for(let i=1;i<64;i++)if(hs[i]>hs[am])am=i;
+  const bg=am+0.5;
+  const win=dark.filter(x=>Math.abs(x-bg)<12);
+  let noise=1;if(win.length>32){const md=median(win);noise=median(win.map(x=>Math.abs(x-md)))*1.4826;}
+  noise=Math.max(noise,1);
+  const t0=clamp(bg+k*noise,3,40), t1=t0+Math.max(4,0.6*t0);
+  return{bg,noise,t0,t1,frac,hist,hs,mode:"auto"};
+}
+
+const V=new Float32Array(N);for(let i=0;i<N;i++)V[i]=Math.max(R0[i],G0[i],B0[i]);
+const LUMA=new Float32Array(N);for(let i=0;i<N;i++)LUMA[i]=0.2126*R0[i]+0.7152*G0[i]+0.0722*B0[i];
+const SD=(()=>{const v2=new Float32Array(N);for(let i=0;i<N;i++)v2[i]=V[i]*V[i];const r=1;const m=boxMean(V,W,H,r),m2=boxMean(v2,W,H,r);const s=new Float32Array(N);for(let i=0;i<N;i++)s[i]=Math.sqrt(Math.max(m2[i]-m[i]*m[i],0));return s;})();
+
+function processAll(p){
+  const a=analyze(V,PRESETS[p.preset]);
+  const {bg,noise,t0,t1}=a;
+  const haze=a.mode==="auto"?bg*p.dehaze:0;
+  const dz=x=>Math.max(x-haze*(1-smooth(0,128,x)),0);
+  const lo=bg+2.5*noise, t1o=dz(t1);
+  const outV=new Float32Array(N), st=new Float32Array(N);
+  for(let i=0;i<N;i++){
+    const v=V[i], s=smooth(1.5*noise,3*noise,SD[i])*p.detail; st[i]=s;
+    const flat=dz(v)*smooth(t0,t1,v);
+    let det=flat; if(v<t1){const lin=t1o*clamp((v-lo)/Math.max(t1-lo,1e-3));det=Math.max(flat,lin);}
+    outV[i]=flat+(det-flat)*s;
+  }
+  const speck=new Uint8Array(N);
+  if(p.despeckle){
+    const blk=new Float32Array(N);for(let i=0;i<N;i++)blk[i]=outV[i]<0.5?1:0;
+    const sur=boxMean(blk,W,H,2);
+    for(let i=0;i<N;i++)if(sur[i]>0.92&&V[i]<2*t1&&outV[i]>0){speck[i]=1;outV[i]=0;}
+  }
+  const R=new Float32Array(N),G=new Float32Array(N),B=new Float32Array(N);
+  const dr=rng(3);
+  let pure=0,kept=0,nsp=0;
+  for(let i=0;i<N;i++){
+    const v=V[i], g=v>1e-4?clamp(outV[i]/v,0,4):0;
+    let r=Math.min(255,R0[i]*g),gg=Math.min(255,G0[i]*g),b=Math.min(255,B0[i]*g);
+    if(p.dither&&outV[i]>0&&outV[i]<t1o){const n=dr()-dr();r=clamp(r+n,1,255);gg=clamp(gg+n,1,255);b=clamp(b+n,1,255);}
+    if(outV[i]<=0){r=gg=b=0;pure++;}
+    if(st[i]>0.5&&v<t1&&outV[i]>0)kept++;
+    if(speck[i])nsp++;
+    R[i]=r;G[i]=gg;B[i]=b;
+  }
+  return{a,haze,R,G,B,outV,st,speck,pure:pure/N,kept:kept/N,nsp,t1o,lo};
+}
+function processV1(){ // previous version: no detail protection, no dehaze
+  const a=analyze(V,3);const R=new Float32Array(N),G=new Float32Array(N),B=new Float32Array(N);
+  const blk=new Float32Array(N),gain=new Float32Array(N);
+  for(let i=0;i<N;i++){gain[i]=smooth(a.t0,a.t1,V[i]);blk[i]=gain[i]<0.5?1:0;}
+  const sur=boxMean(blk,W,H,2);
+  for(let i=0;i<N;i++){let g=gain[i];if(sur[i]>0.85&&V[i]<a.t1*2)g=0;R[i]=R0[i]*g;G[i]=G0[i]*g;B[i]=B0[i]*g;}
+  return{R,G,B};
+}
+const V1=processV1();
+
+/* ---------- state + hero demo ---------- */
+const state={preset:"balanced",detail:1,dehaze:0.5,despeckle:true,dither:true,boost:true,view:"out"};
+let res=processAll(state);
+let split=0.5, userDragged=false, t0anim=performance.now();
+const demo=document.getElementById("demo"), dctx=demo.getContext("2d"), img=dctx.createImageData(W,H);
+
+function paintDemo(){
+  const b=state.boost?4:1, sx=Math.round(split*W), D=img.data;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=y*W+x,o=i*4; let r,g,bb;
+    if(x<sx){r=R0[i];g=G0[i];bb=B0[i];}
+    else if(state.view==="out"){r=res.R[i];g=res.G[i];bb=res.B[i];}
+    else if(state.view==="v1"){r=V1.R[i];g=V1.G[i];bb=V1.B[i];}
+    else{ // debug overlay, same colouring as the node
+      r=g=bb=Math.min(255,V[i]*0.6*(state.boost?2:1));
+      if(res.outV[i]<=0&&V[i]>0.5){r=r*0.3+153;g*=0.3;bb*=0.3;}
+      if(res.st[i]>0.5&&V[i]<res.a.t1&&res.outV[i]>0){r=26;g=230;bb=51;}
+      if(res.speck[i]){r=51;g=128;bb=255;}
+      D[o]=r;D[o+1]=g;D[o+2]=bb;D[o+3]=255;continue;
+    }
+    D[o]=Math.min(255,r*b);D[o+1]=Math.min(255,g*b);D[o+2]=Math.min(255,bb*b);D[o+3]=255;
+  }
+  for(let y=0;y<H;y++){const o=(y*W+Math.min(sx,W-1))*4;D[o]=D[o+1]=D[o+2]=230;}
+  dctx.putImageData(img,0,0);
+}
+function report(){
+  const a=res.a;
+  document.getElementById("report").innerHTML=
+    `[${a.mode}] haze≈<b>${a.bg.toFixed(1)}</b> σ≈<b>${a.noise.toFixed(1)}</b> → black_point=<b>${a.t0.toFixed(0)}</b> toe_to=<b>${a.t1.toFixed(0)}</b> dehaze=${res.haze.toFixed(1)}<br>dark ${(a.frac*100).toFixed(0)}% | pure black <b>${(res.pure*100).toFixed(1)}%</b> | detail kept ${(res.kept*100).toFixed(2)}% | specks ${res.nsp}`;
+  document.getElementById("kval").textContent=`k = ${PRESETS[state.preset]}σ`;
+  document.getElementById("histcap").textContent=`bg ${a.bg.toFixed(1)} · σ ${a.noise.toFixed(1)} · t0 ${a.t0.toFixed(0)} · t1 ${a.t1.toFixed(0)}`;
+  document.getElementById("rtag").textContent=state.view==="dbg"?"debug":state.view==="v1"?"v1 node":"output";
+}
+function recompute(){res=processAll(state);report();paintDemo();}
+
+document.querySelectorAll("[data-preset]").forEach(b=>b.addEventListener("click",()=>{state.preset=b.dataset.preset;document.querySelectorAll("[data-preset]").forEach(x=>x.setAttribute("aria-pressed",x===b));recompute();}));
+document.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click",()=>{state.view=b.dataset.view;document.querySelectorAll("[data-view]").forEach(x=>x.setAttribute("aria-pressed",x===b));report();paintDemo();}));
+for(const id of["detail","dehaze"]){const el=document.getElementById(id);el.addEventListener("input",()=>{state[id]=+el.value;document.getElementById(id+"v").textContent=(+el.value).toFixed(2);recompute();});}
+for(const id of["despeckle","dither"]){const el=document.getElementById(id);el.addEventListener("change",()=>{state[id]=el.checked;recompute();});}
+document.getElementById("boost").addEventListener("change",e=>{state.boost=e.target.checked;paintDemo();});
+function setSplitFrom(e){const r=demo.getBoundingClientRect();split=clamp((e.clientX-r.left)/r.width);userDragged=true;paintDemo();}
+let dragging=false;
+demo.addEventListener("pointerdown",e=>{dragging=true;demo.setPointerCapture(e.pointerId);setSplitFrom(e);});
+demo.addEventListener("pointermove",e=>{if(dragging)setSplitFrom(e);});
+demo.addEventListener("pointerup",()=>dragging=false);
+demo.tabIndex=0;
+demo.addEventListener("keydown",e=>{if(e.key==="ArrowLeft"||e.key==="ArrowRight"){split=clamp(split+(e.key==="ArrowRight"?.05:-.05));userDragged=true;paintDemo();e.preventDefault();}});
+report();paintDemo();
+
+/* ---------- scope canvases ---------- */
+function fit(c){const dpr=Math.min(devicePixelRatio||1,2),w=c.clientWidth,h=+c.getAttribute("height");if(c.width!==Math.round(w*dpr)){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);c.style.height=h+"px";}const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);return{x,w,h};}
+function txt(x,s,px,py,col=COL.dim,align="left"){x.fillStyle=col;x.font=MONO;x.textAlign=align;x.fillText(s,px,py);}
+const ease=t=>t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+
+/* 1: colour protection */
+function drawColor(c,t){
+  const {x,w,h}=fit(c);x.clearRect(0,0,w,h);
+  const t0=22, col=[64,5,5], luma=0.2126*64+0.7152*5+0.0722*5, mx=64;
+  const rows=[{name:"luminance",val:luma,kill:luma<t0},{name:"max(R,G,B)",val:mx,kill:mx<t0}];
+  const L=110,Rr=w-20,sc=v=>L+(Rr-L)*v/80;
+  rows.forEach((r,j)=>{
+    const y=34+j*96, grow=reduce?1:ease(clamp((t%6-0.3-j*0.4)/1.4));
+    txt(x,r.name,12,y+4,COL.fg);
+    x.fillStyle=COL.line;x.fillRect(L,y-8,Rr-L,16);
+    x.fillStyle=r.kill?COL.crush:COL.keep;x.fillRect(L,y-8,(sc(r.val)-L)*grow,16);
+    txt(x,r.val.toFixed(0),L+(sc(r.val)-L)*grow+6,y+4,COL.fg);
+    const sw=y+22, done=grow>.99;
+    x.fillStyle=`rgb(${col.map(v=>v*3).join(",")})`;x.fillRect(L,sw,44,30);
+    txt(x,"input ×3",L+50,sw+19);
+    x.fillStyle=done&&r.kill?"#000":`rgb(${col.map(v=>v*3).join(",")})`;x.strokeStyle=COL.line;x.fillRect(L+130,sw,44,30);x.strokeRect(L+130.5,sw+.5,43,29);
+    txt(x,done?(r.kill?"→ crushed":"→ kept"):"…",L+180,sw+19,done?(r.kill?COL.crush:COL.keep):COL.dim);
+  });
+  const tx=sc(t0);x.strokeStyle=COL.haze;x.setLineDash([4,4]);x.beginPath();x.moveTo(tx,16);x.lineTo(tx,h-14);x.stroke();x.setLineDash([]);
+  txt(x,"t0 = 22",tx,h-2,COL.haze,"center");
+}
+
+/* 2: histogram */
+function drawHist(c,t){
+  const {x,w,h}=fit(c);x.clearRect(0,0,w,h);
+  const a=res.a, pl=8,pr=8,pt=14,pb=26, cw=w-pl-pr, ch=h-pt-pb, bx=v=>pl+cw*v/64;
+  const ph=(t%8)/8; const grow=reduce?1:ease(clamp(ph/0.25)); const reveal=reduce?1:clamp((ph-0.28)/0.5);
+  const mxh=Math.max(...a.hs)/9;
+  x.strokeStyle=COL.line;x.beginPath();x.moveTo(pl,pt+ch+.5);x.lineTo(pl+cw,pt+ch+.5);x.stroke();
+  for(let v=0;v<=64;v+=16){txt(x,String(v),bx(v),h-8,COL.dim,"center");}
+  // sigma band
+  if(reveal>0.2){x.fillStyle="rgba(255,181,71,0.10)";x.fillRect(bx(a.bg-a.noise),pt,bx(a.bg+a.noise)-bx(a.bg-a.noise),ch);}
+  for(let i=0;i<64;i++){const hh=ch*Math.min(1,a.hist[i]/Math.max(...a.hist))*grow;
+    x.fillStyle=i+0.5<a.t0?COL.crush:i+0.5<a.t1?"rgba(231,229,224,0.55)":COL.fg;
+    if(reveal<0.35)x.fillStyle=COL.dim;
+    x.fillRect(bx(i)+1,pt+ch-hh,cw/64-2,hh);}
+  // smoothed curve
+  if(reveal>0){x.strokeStyle=COL.haze;x.lineWidth=1.5;x.beginPath();
+    const n=Math.floor(64*Math.min(1,reveal*2.2));
+    for(let i=0;i<n;i++){const yy=pt+ch-ch*a.hs[i]/(mxh*9)*grow;i?x.lineTo(bx(i+.5),yy):x.moveTo(bx(i+.5),yy);}x.stroke();x.lineWidth=1;}
+  const mark=(v,label,col,vis,row)=>{if(!vis)return;const px=bx(v);x.strokeStyle=col;x.beginPath();x.moveTo(px+.5,pt);x.lineTo(px+.5,pt+ch);x.stroke();txt(x,label,px+4,pt+10+row*13,col);};
+  mark(a.bg,"bg",COL.haze,reveal>0.35,0);
+  const k=PRESETS[state.preset], t0now=reveal>0.55?a.bg+(a.t0-a.bg)*ease(clamp((reveal-0.55)/0.3)):a.bg;
+  mark(t0now,`t0 = bg + ${k}σ`,COL.crush,reveal>0.55,1);
+  mark(a.t1,"t1",COL.fg,reveal>0.9,2);
+}
+
+/* 3: tone curve */
+function curveFns(){const a=res.a,haze=res.haze,dz=v=>Math.max(v-haze*(1-smooth(0,128,v)),0);
+  const flat=v=>dz(v)*smooth(a.t0,a.t1,v);
+  const det=v=>v>=a.t1?flat(v):Math.max(flat(v),res.t1o*clamp((v-res.lo)/Math.max(a.t1-res.lo,1e-3)));
+  return{flat,det,dz,a};}
+function axes(x,w,h,pl,pb,pt,max){
+  const cw=w-pl-12,ch=h-pt-pb,X=v=>pl+cw*v/max,Y=v=>pt+ch-ch*v/max;
+  x.strokeStyle=COL.line;
+  for(let v=0;v<=max;v+=16){x.beginPath();x.moveTo(X(v)+.5,pt);x.lineTo(X(v)+.5,pt+ch);x.stroke();x.beginPath();x.moveTo(pl,Y(v)+.5);x.lineTo(pl+cw,Y(v)+.5);x.stroke();
+    txt(x,String(v),X(v),h-8,COL.dim,"center");txt(x,String(v),pl-6,Y(v)+4,COL.dim,"right");}
+  return{X,Y,cw,ch};
+}
+function drawCurve(c,t){
+  const {x,w,h}=fit(c);x.clearRect(0,0,w,h);
+  const {flat,det,a}=curveFns(); const {X,Y}=axes(x,w,h,34,26,10,64);
+  x.setLineDash([3,4]);x.strokeStyle=COL.dim;x.beginPath();x.moveTo(X(0),Y(0));x.lineTo(X(64),Y(64));x.stroke();x.setLineDash([]);
+  x.fillStyle="rgba(229,72,63,0.10)";x.fillRect(X(0),Y(64),X(a.t0)-X(0),Y(0)-Y(64));
+  const plot=(f,col,wd)=>{x.strokeStyle=col;x.lineWidth=wd;x.beginPath();for(let v=0;v<=64;v+=0.25){const yy=Y(f(v));v?x.lineTo(X(v),yy):x.moveTo(X(v),yy);}x.stroke();x.lineWidth=1;};
+  plot(det,COL.keep,1.6);plot(flat,COL.fg,2);
+  txt(x,"t0",X(a.t0),Y(64)+12,COL.crush,"center");txt(x,"t1",X(a.t1),Y(64)+12,COL.fg,"center");
+  const v=reduce?40:((t*9)%64), o=flat(v);
+  x.strokeStyle=COL.haze;x.setLineDash([2,3]);x.beginPath();x.moveTo(X(v),Y(0));x.lineTo(X(v),Y(o));x.lineTo(X(0),Y(o));x.stroke();x.setLineDash([]);
+  x.fillStyle=COL.haze;x.beginPath();x.arc(X(v),Y(o),4.5,0,7);x.fill();
+  txt(x,`in ${v.toFixed(0)} → out ${o.toFixed(1)}`,X(v)+8,Math.max(Y(o)-8,22),COL.haze);
+}
+
+/* 4: structure along a row */
+const ROW=(()=>{const y=300, xs=[], vs=[], ss=[];
+  // walk a line that crosses haze, the first wisp and nothing else; then append the moon row for an edge
+  for(let x=0;x<W;x++){xs.push(x);vs.push(V[y*W+x]);ss.push(SD[y*W+x]);}
+  const ym=118;for(let x=130;x<200;x++){vs.push(V[ym*W+x]);ss.push(SD[ym*W+x]);}
+  return{vs,ss};})();
+function drawStd(c,t){
+  const {x,w,h}=fit(c);x.clearRect(0,0,w,h);
+  const a=res.a,n=ROW.vs.length,pl=34,cw=w-pl-12,X=i=>pl+cw*i/(n-1);
+  const topH=h*0.48, botT=topH+24, botH=h-botT-22;
+  const Yv=v=>8+(topH-16)*(1-Math.min(v,64)/64), Ys=s=>botT+botH*(1-Math.min(s,12)/12);
+  txt(x,"64",pl-6,Yv(64)+4,COL.dim,"right");txt(x,"0",pl-6,Yv(0)+4,COL.dim,"right");
+  txt(x,"12",pl-6,Ys(12)+4,COL.dim,"right");txt(x,"0",pl-6,Ys(0)+4,COL.dim,"right");
+  x.strokeStyle=COL.line;x.beginPath();x.moveTo(pl,Yv(0)+.5);x.lineTo(pl+cw,Yv(0)+.5);x.moveTo(pl,Ys(0)+.5);x.lineTo(pl+cw,Ys(0)+.5);x.stroke();
+  // seam between the two rows
+  const seam=X(W-.5);x.setLineDash([2,4]);x.beginPath();x.moveTo(seam,4);x.lineTo(seam,h-18);x.stroke();x.setLineDash([]);
+  txt(x,"row 300: haze + wisps",pl+2,h-4);txt(x,"row 118: moon edge",seam+4,h-4);
+  const head=reduce?n-1:Math.floor(((t*28)%(n+40)));
+  x.strokeStyle=COL.fg;x.beginPath();for(let i=0;i<n;i++){const yy=Yv(ROW.vs[i]);i?x.lineTo(X(i),yy):x.moveTo(X(i),yy);}x.stroke();
+  // thresholds
+  [[1.5,"1.5σ"],[3,"3σ"]].forEach(([m,l])=>{const yy=Ys(m*a.noise);x.strokeStyle=COL.dim;x.setLineDash([3,3]);x.beginPath();x.moveTo(pl,yy);x.lineTo(pl+cw,yy);x.stroke();x.setLineDash([]);txt(x,l,pl+cw,yy-3,COL.dim,"right");});
+  const upto=Math.min(head,n-1);
+  for(let i=0;i<=upto;i++){const s=ROW.ss[i],wgt=smooth(1.5*a.noise,3*a.noise,s);
+    x.fillStyle=wgt>0.01?`rgba(63,208,111,${0.25+0.75*wgt})`:COL.dim;
+    const yy=Ys(s);x.fillRect(X(i)-cw/n/2,yy,Math.max(1,cw/n),Ys(0)-yy);}
+  if(head<n){const hx=X(head),win=cw/n*3;x.strokeStyle=COL.haze;x.lineWidth=1.5;x.strokeRect(hx-win/2,Yv(64)-2,win,Yv(0)-Yv(64)+4);x.lineWidth=1;
+    txt(x,`sd ${ROW.ss[head].toFixed(1)}`,Math.min(hx+8,w-70),Yv(64)+10,COL.haze);}
+}
+
+/* 5: blend for one wisp pixel */
+function drawBlend(c,t){
+  const {x,w,h}=fit(c);x.clearRect(0,0,w,h);
+  const {flat,det,a}=curveFns(); const v=26;
+  const fo=flat(v),dO=det(v), s=reduce?1:(0.5-0.5*Math.cos(t*1.2)), out=fo+(dO-fo)*s;
+  const pl=20,cw=w-40, X=val=>pl+cw*val/40;
+  const lanes=[["input v",v,COL.dim],["flat curve",fo,COL.fg],["detail curve",dO,COL.keep],[`blend, struct = ${s.toFixed(2)}`,out,COL.haze]];
+  lanes.forEach(([l,val,col],j)=>{const y=30+j*62;txt(x,l,pl,y-8,COL.fg);
+    x.fillStyle=COL.line;x.fillRect(pl,y,cw,14);x.fillStyle=col;x.fillRect(pl,y,X(val)-pl,14);
+    txt(x,val.toFixed(1),X(val)+6,y+11,col);
+    const lv=Math.round(Math.min(255,val*5));x.fillStyle=`rgb(${lv},${lv},${lv})`;x.fillRect(w-58,y-4,38,22);x.strokeStyle=COL.line;x.strokeRect(w-57.5,y-3.5,37,21);});
+  txt(x,"swatch ×5",w-39,h-6,COL.dim,"center");
+  [0,10,20,30,40].forEach(v=>txt(x,String(v),X(v),h-6,COL.dim,"center"));
+}
+
+/* 6: despeckle grids */
+function drawSpeck(c,t){
+  const {x,w,h}=fit(c);x.clearRect(0,0,w,h);
+  const cell=Math.min(26,(w-60)/10), gap=w/2;
+  const dot=[[2,2]], line=[[0,2],[1,2],[2,2],[3,1],[4,1]];
+  const ph=reduce?1:clamp(((t%6)-0.4)/3);
+  [[dot,"isolated dot",0],[line,"thin line",1]].forEach(([lit,label,j])=>{
+    const ox=j*gap+(gap-cell*5)/2, oy=26;
+    txt(x,label,ox+cell*2.5,14,COL.fg,"center");
+    const isLit=(cx,cy)=>lit.some(([a,b])=>a===cx&&b===cy);
+    const order=[];for(let cy=0;cy<5;cy++)for(let cx=0;cx<5;cx++)order.push([cx,cy]);
+    const shown=Math.floor(ph*25);let blk=0,count=0;
+    order.forEach(([cx,cy],k)=>{const L=isLit(cx,cy);const px=ox+cx*cell,py=oy+cy*cell;
+      x.fillStyle=L?COL.fg:"#000";x.fillRect(px+1,py+1,cell-2,cell-2);
+      x.strokeStyle=COL.line;x.strokeRect(px+.5,py+.5,cell-1,cell-1);
+      if(k<shown&&!L){x.fillStyle="rgba(229,72,63,0.35)";x.fillRect(px+1,py+1,cell-2,cell-2);blk++;}
+      if(k<shown)count++;});
+    x.strokeStyle=COL.haze;x.lineWidth=1.5;x.strokeRect(ox+2*cell+.5,oy+2*cell+.5,cell-1,cell-1);x.lineWidth=1;
+    const total=25-lit.length, frac=total/25, cur=count?blk/25:0;
+    const by=oy+cell*5+18;
+    x.fillStyle=COL.line;x.fillRect(ox,by,cell*5,8);x.fillStyle=frac>0.92?COL.crush:COL.keep;x.fillRect(ox,by,cell*5*cur,8);
+    const tx=ox+cell*5*0.92;x.strokeStyle=COL.haze;x.beginPath();x.moveTo(tx+.5,by-4);x.lineTo(tx+.5,by+12);x.stroke();
+    txt(x,`${(cur).toFixed(2)}`,ox,by+26,COL.fg);
+    if(ph>=1)txt(x,frac>0.92?"removed":"kept",ox+cell*5,by+26,frac>0.92?COL.crush:COL.keep,"right");
+  });
+}
+
+/* 7: dither */
+const DN=(()=>{const r=rng(11),a=new Float32Array(4000);for(let i=0;i<a.length;i++)a[i]=r()-r();return a;})();
+function drawDither(c,t){
+  const {x,w,h}=fit(c);x.clearRect(0,0,w,h);
+  const cols=Math.floor(w), half=(h-30)/2, rowsN=Math.max(2,Math.floor(half/3));
+  const shift=reduce?0:Math.floor(t*12);
+  for(let i=0;i<cols;i++){
+    const d=i/cols, glowv=Math.pow(1-d,2)*14;  // a toe spanning ~14 levels
+    const q=Math.round(glowv);
+    const lv=Math.min(255,q*6);x.fillStyle=`rgb(${lv},${lv},${Math.min(255,lv+6)})`;x.fillRect(i,4,1,half-6);
+    for(let r=0;r<rowsN;r++){const n=DN[(i*7+r*131+shift*17)%DN.length];const qd=Math.max(0,Math.round(glowv+n));const l2=Math.min(255,qd*6);
+      x.fillStyle=`rgb(${l2},${l2},${Math.min(255,l2+6)})`;x.fillRect(i,half+8+r*(half-6)/rowsN,1,(half-6)/rowsN+0.5);}
+  }
+  txt(x,"8-bit steps",6,half+2,COL.dim);txt(x,"triangular dither",6,h-6,COL.dim);
+}
+
+/* ---------- loop ---------- */
+const scopes=[["cvColor",drawColor],["cvHist",drawHist],["cvCurve",drawCurve],["cvStd",drawStd],["cvBlend",drawBlend],["cvSpeck",drawSpeck],["cvDither",drawDither]].map(([id,f])=>({c:document.getElementById(id),f,vis:true}));
+if("IntersectionObserver" in window){const io=new IntersectionObserver(es=>es.forEach(e=>{const s=scopes.find(s=>s.c===e.target);if(s)s.vis=e.isIntersecting;}));scopes.forEach(s=>io.observe(s.c));}
+function frame(now){
+  const t=(now-t0anim)/1000;
+  if(!userDragged&&!reduce&&t<6){split=0.5+0.38*Math.sin(t*1.1);paintDemo();}
+  else if(!userDragged&&!reduce&&t>=6&&split!==0.5){split=0.5;paintDemo();}
+  for(const s of scopes)if(s.vis)s.f(s.c,t);
+  if(!reduce)requestAnimationFrame(frame);
+}
+scopes.forEach(s=>s.f(s.c,reduce?99:0));
+requestAnimationFrame(frame);
+addEventListener("resize",()=>scopes.forEach(s=>s.f(s.c,reduce?99:0)));
+})();
+</script>
+
+</body></html>
